@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculate the Area and Show the Shape (UTM)</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <style>
+    body {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: auto;
+      font-size: 16px;
+    }
+
+    h2 {
+      font-family: 'Times New Roman', 'Khmer OS Muol Light', 'Khmer OS Battambang', Arial, sans-serif;
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 24px;
+    }
+
+    .subtitle {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      font-size: 14px;
+      text-align: center;
+      margin-top: -5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+
+    .instruction {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      font-size: 16px;
+      text-align: center;
+      margin: 10px 0 15px;
+      color: #333;
+    }
+
+    /* ===== BOX LOOK ===== */
+    .table-container {
+      width: 100%;
+      overflow-x: hidden;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #fafafa;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      background: #fff;
+    }
+
+    th, td {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: center;
+      word-wrap: break-word;
+    }
+
+    th {
+      background: #f0f0f0;
+      font-weight: 600;
+    }
+
+    input[type="number"] {
+      font-family: 'Times New Roman', Arial, sans-serif;
+      width: 100%;
+      padding: 10px;         
+      font-size: 16px;       
+      box-sizing: border-box;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    input[type="number"]:focus {
+      border-color: #0066cc;
+    }
+
+    button {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      width: 100%;
+      padding: 12px;
+      font-size: 18px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+
+    button:hover {
+      filter: brightness(0.95);
+    }
+
+    .add-btn {
+      background: #28a745;
+      margin-top: 8px;
+      font-size: 16px;
+      padding: 8px;
+    }
+
+    #result {
+      font-family: 'Times New Roman', 'Khmer OS Siemreap', Arial, sans-serif;
+      margin-top: 10px;
+      font-size: 18px;
+      text-align: center;
+      color: #333;
+    }
+
+    #map {
+      margin-top: 20px;
+      height: 50vh;
+      min-height: 350px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Calculate the Area (in hectares) and Show the Shape by UTM</h2>
+  <p class="subtitle">(Prepare by: WWF-KH, PMEL 2026 (Hun Bunnarith & Chhin Chhunhoir))</p>
+  <p class="instruction">
+    Please Insert UTM of X and Y in Table below (At Least 3 Points)
+  </p>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>X (Easting)</th>
+          <th>Y (Northing)</th>
+        </tr>
+      </thead>
+      <tbody id="coordTable"></tbody>
+    </table>
+    <button type="button" class="add-btn" onclick="addRow()">+ Add Row</button>
+  </div>
+
+  <button onclick="calculateAndDraw()">Calculate</button>
+
+  <div id="result"></div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.7.5/proj4.js"></script>
+
+  <script>
+    /* =====================================================
+        1) Build coordinate input table (Starts with 7 rows)
+    ===================================================== */
+    const table = document.getElementById("coordTable");
+    let rowCount = 0;
+
+    function addRow() {
+      rowCount++;
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${rowCount}</td>
+        <td><input type="number" id="x${rowCount}" step="any" placeholder="X ${rowCount}"></td>
+        <td><input type="number" id="y${rowCount}" step="any" placeholder="Y ${rowCount}"></td>
+      `;
+      table.appendChild(row);
+    }
+
+    // Initialize 7 default rows
+    for (let i = 0; i < 5; i++) {
+      addRow();
+    }
+
+    /* =====================================================
+        2) Projection: UTM Zone 48N (WGS84)
+    ===================================================== */
+    proj4.defs(
+      "UTM48N",
+      "+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"
+    );
+
+    /* =====================================================
+        3) Map + Imagery basemap
+    ===================================================== */
+    const map = L.map("map").setView([12.84, 107.041], 8); 
+
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 19,
+        attribution: "© Esri"
+      }
+    ).addTo(map);
+
+    /* =====================================================
+        4) Load GeoJSON layers
+    ===================================================== */
+
+    // District MDK
+    fetch("District_Boundary_MDK.geojson")
+      .then(r => r.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: { color: "#000000", weight: 2, fill: false }
+        }).addTo(map);
+      })
+      .catch(err => console.error("Failed to load District_Boundary_MDK.geojson:", err));
+
+    // PPWS & SWS
+    fetch("SWS and PPWS Shapefile_updated.geojson")
+      .then(r => r.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: { color: "#FFD700", weight: 0.8, fill: false }
+        }).addTo(map);
+      })
+      .catch(err => console.error("Failed to load SWS and PPWS Shapefile_updated.geojson:", err));   
+
+    /* =====================================================
+        5) Polygon drawing + area calculation (ha)
+    ===================================================== */
+    let polygonLayer = null;
+
+    function calculateAndDraw() {
+      if (polygonLayer) map.removeLayer(polygonLayer);
+
+      const utm = [];
+      const latlngs = [];
+
+      for (let i = 1; i <= rowCount; i++) {
+        const xInput = document.getElementById(`x${i}`);
+        const yInput = document.getElementById(`y${i}`);
+
+        if (xInput && yInput) {
+          const x = parseFloat(xInput.value);
+          const y = parseFloat(yInput.value);
+
+          if (!isNaN(x) && !isNaN(y)) {
+            utm.push([x, y]);
+            const [lon, lat] = proj4("UTM48N", "WGS84", [x, y]);
+            latlngs.push([lat, lon]);
+          }
+        }
+      }
+
+      if (utm.length < 3) {
+        document.getElementById("result").innerText =
+          "At Least 3 Points are included";
+        return;
+      }
+
+      let area2 = 0;
+      for (let i = 0; i < utm.length; i++) {
+        const [x1, y1] = utm[i];
+        const [x2, y2] = utm[(i + 1) % utm.length];
+        area2 += (x1 * y2 - x2 * y1);
+      }
+
+      const sqm = Math.abs(area2 / 2);
+      const ha = sqm / 10000;
+
+      document.getElementById("result").innerText =
+        `Total Area: ${ha.toFixed(2)} Hectar`;
+
+      polygonLayer = L.polygon(latlngs, { color: "blue", weight: 2 }).addTo(map);
+      polygonLayer.bringToFront();
+
+      // Better zoom for small polygons
+      map.fitBounds(polygonLayer.getBounds(), {
+        padding: [30, 30],
+        maxZoom: 19
+      });
+    }
+  </script>
+
+</body>
+</html>
